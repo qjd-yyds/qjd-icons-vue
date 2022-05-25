@@ -1,75 +1,60 @@
 const consola = require('consola');
 const chalk = require('chalk');
-const { rollup } = require('rollup');
+const { build } = require('esbuild');
 const path = require('path');
 const { emptyDir } = require('fs-extra');
 const { pathOutput, pathSrc } = require('./paths');
-const vue = require('unplugin-vue/rollup'); // sfc --> js
-const esbuild = require('rollup-plugin-esbuild').default;
-console.log(esbuild, '=======>esbuild');
-const getBoundle = minify =>
-  rollup({
-    input: [path.resolve(pathSrc, 'index.ts')],
-    external: ['vue'],
-    plugins: [
-      vue(),
-      esbuild({
-        target: 'es2018',
-        minify // 压缩
-      })
-    ]
-  });
-const buildBundled = async minify => {
-  const boundle = await getBoundle(minify);
-  const tasks = [
-    boundle.write({
-      format: 'iife',
-      file: path.resolve(pathOutput, `index.iife${minify ? '.min' : ''}.js`),
-      name: 'ElementPlusIconsVue',
-      globals: {
-        vue: 'Vue'
-      }
-    })
-  ];
-  if (!minify) {
-    tasks.push(
-      boundle.write({
-        format: 'cjs',
-        file: path.resolve(pathOutput, `index${minify ? '.min' : ''}.js`),
-        globals: {
+const vue = require('unplugin-vue/esbuild'); // sfc --> js
+const GlobalsPlugin = require('esbuild-plugin-globals');
+const buildBundle = async () => {
+  const getBuildOptions = format => {
+    const options = {
+      entryPoints: [path.resolve(pathSrc, 'index.ts')],
+      target: 'es2018',
+      platform: 'neutral',
+      plugins: [vue()],
+      bundle: true,
+      format
+    };
+    if (format === 'iife') {
+      options.plugins.push(
+        GlobalsPlugin({
           vue: 'Vue'
-        }
+        })
+      );
+    } else {
+      options.external = ['vue'];
+    }
+    return options;
+  };
+  const doBuild = async minify => {
+    await Promise.all([
+      build({
+        ...getBuildOptions('esm'),
+        outfile: path.resolve(pathOutput, `index${minify ? '.min' : ''}.mjs`),
+        minify,
+        sourcemap: minify
       }),
-      boundle.write({
-        format: 'esm',
-        file: path.resolve(pathOutput, `index${minify ? '.min' : ''}.mjs`),
-        globals: {
-          vue: 'Vue'
-        }
+      build({
+        ...getBuildOptions('iife'),
+        outfile: path.resolve(pathOutput, `index.iife${minify ? '.min' : ''}.js`),
+        minify,
+        sourcemap: minify
+      }),
+      build({
+        ...getBuildOptions('cjs'),
+        outfile: path.resolve(pathOutput, `index${minify ? '.min' : ''}.js`),
+        minify,
+        sourcemap: minify
       })
-    );
-  }
-  await Promise.all(tasks);
-};
-const buildunBundled = async () => {
-  const boundle = await getBoundle(false);
-  boundle.write({
-    format: 'es',
-    dir: path.resolve(pathOutput, 'es'),
-    preserveModules: true,
-    entryFileNames: '[name].mjs'
-  });
-  boundle.write({
-    format: 'cjs',
-    dir: path.resolve(pathOutput, 'lib'),
-    preserveModules: true,
-    exports: 'named'
-  });
+    ]);
+  };
+  return Promise.all([doBuild(true), doBuild(false)]);
 };
 (async () => {
   consola.info(chalk.cyan('删除dist目录------>'));
   await emptyDir(pathOutput);
   consola.info(chalk.cyan('正在打包 请稍后...'));
-  await Promise.all([buildunBundled(), buildBundled(true), buildBundled(false)]);
+  await buildBundle();
   consola.success(chalk.green('打包完成'));
 })();
